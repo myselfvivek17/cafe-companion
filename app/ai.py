@@ -26,13 +26,15 @@ def _gen(prompt: str):
                                    location=os.getenv("GOOGLE_CLOUD_LOCATION", "global"))
         cfg = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.4,
                                           thinking_config=types.ThinkingConfig(thinking_budget=0))
-        for attempt in range(3):  # brief retry on rate limits (429) during bursts
+        # On rate limits (429) alternate between the main model and a lighter backup model, with short backoff.
+        models = [MODEL, os.getenv("GEMINI_BACKUP_MODEL", "gemini-2.5-flash-lite")]
+        for attempt in range(4):
             try:
-                r = _client.models.generate_content(model=MODEL, contents=prompt, config=cfg)
+                r = _client.models.generate_content(model=models[attempt % 2], contents=prompt, config=cfg)
                 return json.loads(r.text)
             except Exception as e:
-                if attempt < 2 and ("429" in str(e) or "RESOURCE_EXHAUSTED" in str(e)):
-                    import time as _t; _t.sleep(1.5 * (attempt + 1)); continue
+                if attempt < 3 and ("429" in str(e) or "RESOURCE_EXHAUSTED" in str(e)):
+                    import time as _t; _t.sleep(0.5 if attempt == 0 else 1.5 * attempt); continue
                 raise
     except Exception as e:
         logging.warning("Gemini failed, using fallback: %s %s", type(e).__name__, str(e)[:160])
