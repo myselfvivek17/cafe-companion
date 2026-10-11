@@ -84,6 +84,7 @@ def _fallback_chat(messages):
         q, chips = FALLBACK_Q[len(answers)]
         return {"done": False, "reply": q, "chips": chips}
     name, why, stay, meet, interests = answers[:5]
+    if len(answers) > 5: interests = answers[-1]
     return {"done": True, "reply": "Thanks! Setting up your table…",
             "profile": {"first_name": name, "why": why,
                         "stay_minutes": {"Under 30 min": 25, "2+ hours": 150}.get(stay, 60),
@@ -91,6 +92,11 @@ def _fallback_chat(messages):
 
 def chat(table: int, messages: list, history):
     guest_turns = sum(m["role"] == "guest" for m in messages)
+    if history and not messages:  # returning guest: greet by name with their usual, no Gemini guesswork
+        usual = (history.get("usual_orders") or [None])[0]
+        q = f"Welcome back, {history['name']}! " + (f"Your usual {usual} today?" if usual else "What brings you in today?")
+        chips = ["Yes, the usual", "Something different"] if usual else ["Getting work done", "Here to meet people", "Just unwinding"]
+        return {"done": False, "reply": q, "chips": chips}
     out = _gen(f"""You are "Bean", the warm AI host of an Indian café, chatting on a guest's phone after they scanned the QR on table {table}.
 The café is called "Café Companion"; you are Bean. For a first-time guest, your FIRST message must greet them and ask only their first name (no chips).
 Your goal, in as few natural turns as possible (max 5 questions): learn their first name (skip if known), why they came today,
@@ -110,14 +116,17 @@ or {{"done": true, "reply": "<one warm closing line>", "profile": {{"first_name"
     try:
         if out.get("done"):
             p = out["profile"]
-            prof = {"first_name": str(p.get("first_name") or (history or {}).get("name") or "Guest")[:40],
+            known = (history or {}).get("name")  # returning guest: never overwrite their name
+            prof = {"first_name": str(known or p.get("first_name") or "Guest")[:40],
                     "why": str(p.get("why", "")), "stay_minutes": int(p.get("stay_minutes") or 60),
                     "open_to_meet": bool(p.get("open_to_meet")), "interests": str(p.get("interests", ""))}
             return {"done": True, "reply": str(out.get("reply", "")), "profile": prof}
         if guest_turns >= 6: raise ValueError("too long")
         return {"done": False, "reply": str(out["reply"]), "chips": [str(c) for c in out.get("chips", [])][:4]}
     except Exception:
-        return _fallback_chat(messages)
+        r = _fallback_chat(messages)
+        if r.get("done") and history: r["profile"]["first_name"] = history["name"]
+        return r
 
 def group(people: list[dict]):
     """people: [{id, name, interests}] -> [{ids:[..], reason}]"""
