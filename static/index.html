@@ -1,0 +1,5 @@
+<!doctype html><meta name=viewport content="width=device-width,initial-scale=1"><link rel=stylesheet href=/static/style.css>
+<header>☕ Café Companion — the café that adapts to why you came</header>
+<main><div class=card><a href=/staff>Staff dashboard →</a></div>
+<div class=card><b>Table links</b> (open on phone / turn into QR)<div id=l></div></div></main>
+<script>for(let i=1;i<=6;i++){const u=location.origin+'/t/'+i;l.innerHTML+=`<p>Table ${i}: <a href="/t/${i}">${u}</a></p>`}</script>

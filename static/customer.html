@@ -1,0 +1,36 @@
+<!doctype html><meta name=viewport content="width=device-width,initial-scale=1"><link rel=stylesheet href=/static/style.css>
+<header>☕ Café Companion · Table <span id=tn></span></header>
+<main><div id=chat></div><div id=ask class=card></div><div id=out></div></main>
+<script>
+const table=+location.pathname.split('/').pop();tn.textContent=table;
+const Q=[['name',"Hi! What's your first name?"],['why',"What brings you here today? (work, catch-up, unwind…)"],
+ ['stay_minutes',"How long are you staying (minutes)?"],['open_to_meet',"Open to meeting other people? (yes/no)"],['interests',"Any interests? (comma separated)"]];
+const A={};let i=0,visit=null,cart=new Set();
+const say=(c,t)=>{chat.innerHTML+=`<div class=${c}></div>`;chat.lastChild.textContent=t};
+function next(){if(i>=Q.length)return finish();say('bot',Q[i][1]);ask.innerHTML='<input id=a autofocus> <button onclick=send()>Send</button>';a.onkeydown=e=>e.key=='Enter'&&send()}
+function send(){const v=a.value.trim();if(!v)return;say('me',v);const k=Q[i][0];
+ A[k]=k=='stay_minutes'?(parseInt(v)||60):k=='open_to_meet'?/^(y|yes|sure|ok|yeah)/i.test(v):v;i++;next()}
+async function finish(){ask.remove();say('bot','Thinking…');
+ const r=await fetch('/api/visits',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({table_id:table,first_name:A.name,why:A.why,stay_minutes:A.stay_minutes,open_to_meet:A.open_to_meet,interests:A.interests})});
+ visit=await r.json();chat.lastChild.remove();render()}
+function render(){
+ let h='';
+ if(visit.intent=='focus')h+=`<div class=banner>You're in focus mode. You won't be matched and staff will keep it quiet.</div>`;
+ h+=`<div class=card><b>Picked for you</b>`+visit.recs.map(m=>`<p><b>${m.name}</b> ₹${m.price}<br><small>${m.reason}</small></p>`).join('')+`</div>`;
+ h+=`<div class=card id=menu><b>Menu</b></div><div id=match></div>`;out.innerHTML=h;
+ fetch('/api/menu').then(r=>r.json()).then(m=>{menu.innerHTML+=m.map(x=>`<div class=row><span>${x.name} ₹${x.price}</span><button id=b_${x.id} onclick="tog('${x.id}')">Add</button></div>`).join('')+`<p><button onclick=order()>Place order</button> <span id=ostat></span></p>`});
+ if(visit.intent=='connect'){pollMatch();setInterval(pollMatch,4000)}}
+function tog(id){cart.has(id)?cart.delete(id):cart.add(id);document.getElementById('b_'+id).textContent=cart.has(id)?'Added ✓':'Add'}
+async function order(){if(!cart.size)return;await fetch('/api/orders',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({visit_id:visit.visit_id,items:[...cart]})});
+ cart.clear();ostat.textContent='Order sent!';document.querySelectorAll('[id^=b_]').forEach(b=>b.textContent='Add')}
+async function pollMatch(){
+ const d=await (await fetch(`/api/visits/${visit.visit_id}/match`)).json(),m=d.match;
+ if(!m){match.innerHTML=`<div class=card><b>Matches</b><p>Looking for people who share your interests…</p></div>`;return}
+ let h=`<div class=card><b>Matches</b><p>Suggested group of ${m.size}: ${m.reason}</p>`;
+ if(m.status=='matched')h+='<p>🎉 Everyone accepted!</p>'+m.people.map(p=>`<p><b></b>${p.first_name} — Table ${p.table}</p>`).join('');
+ else if(m.accepted)h+='<p>Waiting for the others to accept…</p>';
+ else h+=`<button onclick="resp(${m.id},true)">Accept</button> <button class=alt onclick="resp(${m.id},false)">Decline</button>`;
+ match.innerHTML=h+'</div>'}
+async function resp(id,accept){await fetch(`/api/matches/${id}/respond`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({visit_id:visit.visit_id,accept})});pollMatch()}
+next();
+</script>

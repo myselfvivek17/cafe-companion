@@ -1,0 +1,22 @@
+<!doctype html><meta name=viewport content="width=device-width,initial-scale=1"><link rel=stylesheet href=/static/style.css>
+<header>☕ Staff view</header>
+<main>
+<div class=card><button onclick="post('/api/seed')">Seed demo visitors</button>
+<button onclick="post('/api/match')">Run matching</button>
+<button class=alt onclick="post('/api/reset')">Reset</button></div>
+<div class=card id=counts></div>
+<div class=card><b>Floor</b><div class=grid id=grid></div></div>
+<div class=card><b>Alerts</b><div id=alerts></div></div>
+<div class=card><b>Order queue</b><div id=orders></div></div>
+</main>
+<script>
+async function post(u){await fetch(u,{method:'POST'});load()}
+async function load(){
+ const d=await (await fetch('/api/staff')).json(),c=d.counts;
+ counts.innerHTML=`Working: <b>${c.working}</b> · Open: <b>${c.open}</b> · Matches: <b>${c.active_matches}</b> · Free: <b>${c.free}</b>`;
+ grid.innerHTML=d.tables.map(t=>`<div class="tbl ${t.state}">T${t.id}<br><small>${t.state}${t.name?' · '+t.name:''}</small></div>`).join('');
+ alerts.innerHTML=d.alerts.map(a=>`<p>⚠️ ${a}</p>`).join('')||'<p>All calm.</p>';
+ orders.innerHTML=d.orders.map(o=>`<div class=row><span>T${o.table}: ${o.items} (${o.minutes}m)</span><button onclick="post('/api/orders/${o.id}/ready')">Ready</button></div>`).join('')||'<p>No open orders.</p>';
+}
+load();setInterval(load,5000);
+</script>

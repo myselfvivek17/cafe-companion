@@ -1,0 +1,5 @@
+fastapi
+uvicorn
+sqlalchemy
+pg8000
+google-genai
