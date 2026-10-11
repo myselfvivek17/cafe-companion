@@ -18,6 +18,7 @@ class Visit(Base):
     __tablename__ = "visits"
     id = Column(Integer, primary_key=True)
     table_id = Column(Integer)
+    guest_id = Column(String(64), index=True)  # anonymous browser id, lets us recognise regulars
     first_name = Column(String(64))
     intent = Column(String(16))  # focus|connect|chill
     interests = Column(Text, default="")
@@ -45,6 +46,9 @@ ZONES = {1: "window", 2: "window", 3: "sofa", 4: "quiet", 5: "quiet", 6: "bar"}
 
 def init_db():
     Base.metadata.create_all(engine)
+    from sqlalchemy import text, inspect
+    if "guest_id" not in {c["name"] for c in inspect(engine).get_columns("visits")}:
+        with engine.begin() as c: c.execute(text("ALTER TABLE visits ADD COLUMN guest_id VARCHAR(64)"))
     with Session() as s:
         for i, z in ZONES.items():
             if not s.get(Table, i):

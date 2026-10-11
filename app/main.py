@@ -41,14 +41,33 @@ class VisitIn(BaseModel):
     stay_minutes: int = 60
     open_to_meet: bool = False
     interests: str = ""
+    guest_id: str = ""
 
-def new_visit(s, table_id, name, why, stay, open_to_meet, interests, intent=None):
-    # one active visit per table: close the previous one
+def guest_history(s, gid):
+    """Past visits + most-ordered items for a returning guest (None for first-timers)."""
+    if not gid: return None
+    vs = s.query(Visit).filter_by(guest_id=gid).order_by(Visit.id).all()
+    if not vs: return None
+    from collections import Counter
+    c = Counter()
+    for o in s.query(Order).filter(Order.visit_id.in_([v.id for v in vs])):
+        c.update(n for n in o.items.split(", ") if n)
+    by_name = {m["name"]: m["id"] for m in ai.MENU}
+    usual = [n for n, _ in c.most_common(2)]
+    return {"name": vs[-1].first_name, "past_visits": len(vs), "usual_orders": usual,
+            "usual_ids": [by_name[n] for n in usual if n in by_name],
+            "past_reasons": list(dict.fromkeys(v.intent for v in vs))}
+
+def new_visit(s, table_id, name, why, stay, open_to_meet, interests, intent=None, guest_id=""):
+    history = guest_history(s, guest_id)
+    # one active visit per table / per guest: close the previous one
     for old in s.query(Visit).filter_by(table_id=table_id, active=True): old.active = False
+    if guest_id:
+        for old in s.query(Visit).filter_by(guest_id=guest_id, active=True): old.active = False
     rec = {"intent": intent, "recs": []} if intent else ai.classify(
-        dict(why=why, stay_minutes=stay, open_to_meet=open_to_meet, interests=interests))
-    v = Visit(table_id=table_id, first_name=name.strip()[:40] or "Guest", intent=rec["intent"],
-              interests=interests, stay_minutes=stay)
+        dict(why=why, stay_minutes=stay, open_to_meet=open_to_meet, interests=interests), history)
+    v = Visit(table_id=table_id, guest_id=guest_id or None, first_name=name.strip()[:40] or "Guest",
+              intent=rec["intent"], interests=interests, stay_minutes=stay)
     s.add(v); s.commit()
     return v, rec["recs"]
 
@@ -56,10 +75,26 @@ def new_visit(s, table_id, name, why, stay, open_to_meet, interests, intent=None
 def create_visit(b: VisitIn):
     with Session() as s:
         if not s.get(Table, b.table_id): raise HTTPException(404, "unknown table")
-        v, recs = new_visit(s, b.table_id, b.first_name, b.why, b.stay_minutes, b.open_to_meet, b.interests)
+        v, recs = new_visit(s, b.table_id, b.first_name, b.why, b.stay_minutes, b.open_to_meet, b.interests,
+                            guest_id=b.guest_id[:64])
         names = {m["id"]: m for m in ai.MENU}
         return {"visit_id": v.id, "intent": v.intent,
                 "recs": [{**names[r["id"]], "reason": r["reason"]} for r in recs]}
+
+class ChatIn(BaseModel):
+    table_id: int
+    guest_id: str = ""
+    messages: list[dict] = []
+
+@app.post("/api/chat")
+def host_chat(b: ChatIn):
+    """AI host agent: Gemini decides the next question (or finishes with a profile)."""
+    msgs = [{"role": "guest" if m.get("role") == "guest" else "host", "text": str(m.get("text", ""))[:300]}
+            for m in b.messages][-12:]
+    with Session() as s:
+        history = guest_history(s, b.guest_id[:64])
+    if history: history = {k: v for k, v in history.items() if k != "usual_ids"}
+    return {**ai.chat(b.table_id, msgs, history), "returning": bool(history)}
 
 class OrderIn(BaseModel):
     visit_id: int
@@ -160,11 +195,15 @@ def staff_state():
         orders = s.query(Order).order_by(Order.id).all()
         matched = {i for m in matches if m.status == "matched" for i in _ids(m.visit_ids)}
         by_table = {v.table_id: v for v in visits}
+        from collections import Counter
+        gids = [v.guest_id for v in visits if v.guest_id]
+        nvis = Counter(g for (g,) in s.query(Visit.guest_id).filter(Visit.guest_id.in_(gids))) if gids else {}
         tables = []
         for t in s.query(Table).order_by(Table.id):
             v = by_table.get(t.id)
             state = "free" if not v else "matched" if v.id in matched else v.intent
-            tables.append({"id": t.id, "zone": t.zone, "state": state, "name": v.first_name if v else None})
+            tables.append({"id": t.id, "zone": t.zone, "state": state, "name": v.first_name if v else None,
+                           "regular": bool(v and v.guest_id and nvis.get(v.guest_id, 0) > 1)})
         counts = {"working": sum(t["state"] == "focus" for t in tables),
                   "open": sum(t["state"] in ("connect", "chill") for t in tables),
                   "active_matches": len(matches),

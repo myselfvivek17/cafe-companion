@@ -29,7 +29,7 @@ async function load(){
  const d=await (await fetch('/api/staff')).json(),c=d.counts;
  $('s_work').textContent=c.working;$('s_open').textContent=c.open;$('s_match').textContent=`${c.pending_matches??c.active_matches} / ${c.accepted_matches??0}`;$('s_free').textContent=c.free;
  const f=$('floor');f.innerHTML='';d.tables.forEach(t=>{const b=el('div','tbl '+t.state);b.appendChild(el('div','n','T'+t.id));b.appendChild(el('div','z',t.zone+' seating'));
-  b.appendChild(el('div','who',LABEL[t.state]+(t.name?' · '+t.name:'')));f.appendChild(b)});
+  b.appendChild(el('div','who',LABEL[t.state]+(t.name?' · '+t.name:'')+(t.regular?' ⭐ Regular':'')));f.appendChild(b)});
  const a=$('alerts');a.innerHTML='';(d.alerts.length?d.alerts:['All calm. Nothing needs attention.']).forEach(x=>a.appendChild(el('div','alert',x)));
  const o=$('orders');o.innerHTML='';if(!d.orders.length)o.appendChild(el('p','muted','No open orders.'));
  d.orders.forEach(q=>{const r=el('div','row');const s=el('span');s.appendChild(el('b',null,'T'+q.table+' '));s.append(q.items);s.appendChild(el('div','muted',q.minutes+' min ago'));

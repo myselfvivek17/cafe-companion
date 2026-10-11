@@ -5,36 +5,31 @@
 <script>
 const $=id=>document.getElementById(id);
 const table=+location.pathname.split('/').pop()||1;$('tn').textContent=table;
-const Q=[
- {k:'name',t:"Hi! Welcome in. What's your first name?",text:true,ph:'First name'},
- {k:'why',t:"What brings you here today?",chips:['Getting work done','Catching up with a friend','Here to meet new people','Just unwinding'],text:true,ph:'Or type your own…'},
- {k:'stay',t:"How long are you planning to stay?",chips:['Under 30 min','About an hour','2+ hours']},
- {k:'open',t:"Would you be open to meeting people with similar interests today?",chips:['Yes, happy to','Not today']},
- {k:'interests',t:"Pick a few interests (for recommendations and matching):",chips:['Startups','Tech','Books','Music','Photography','Hiking','Games','Design','Travel','Fitness'],multi:true,text:true,ph:'Add more, comma separated'}
-];
-const A={};let i=0,visit=null;const cart=new Map();let menuData=[];
-function say(cls,t){const d=document.createElement('div');d.className=cls;d.textContent=t;$('chat').appendChild(d);d.scrollIntoView({behavior:'smooth',block:'end'})}
-function next(){
- if(i>=Q.length)return finish();
- const q=Q[i];say('bot',q.t);const ask=$('ask');ask.innerHTML='';const picked=new Set();
- if(q.chips){const c=document.createElement('div');c.className='chips';
-  q.chips.forEach(ch=>{const b=document.createElement('button');b.type='button';b.className='chip';b.textContent=ch;
-   b.onclick=()=>{if(q.multi){picked.has(ch)?picked.delete(ch):picked.add(ch);b.classList.toggle('on')}else answer(ch)};c.appendChild(b)});ask.appendChild(c)}
- if(q.text||q.multi){const r=document.createElement('div');r.className='inrow';
-  const inp=document.createElement('input');inp.type='text';inp.placeholder=q.ph||'Type here…';inp.autocomplete='off';
-  const go=document.createElement('button');go.type='button';go.textContent=q.multi?'Done':'Send';
-  const submit=()=>{const typed=inp.value.trim();const v=q.multi?[...picked,...typed.split(',').map(s=>s.trim()).filter(Boolean)].join(', '):typed;if(!v)return;answer(v)};
-  go.onclick=submit;inp.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();submit()}};
-  r.appendChild(inp);r.appendChild(go);ask.appendChild(r);setTimeout(()=>inp.focus(),50)}
+// anonymous per-device id so the café recognises regulars (no login, no personal data)
+let gid=localStorage.getItem('cc_gid');if(!gid){gid=(crypto.randomUUID?crypto.randomUUID():String(Math.random()).slice(2));localStorage.setItem('cc_gid',gid)}
+const msgs=[];let visit=null;const cart=new Map();let menuData=[];
+function say(cls,t){const d=document.createElement('div');d.className=cls;d.textContent=t;$('chat').appendChild(d);d.scrollIntoView({behavior:'smooth',block:'end'});return d}
+function typing(){const d=say('bot','Bean is typing…');d.style.opacity=.6;return d}
+async function turn(){
+ const ask=$('ask');ask.innerHTML='';const t=typing();let r;
+ try{r=await (await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({table_id:table,guest_id:gid,messages:msgs})})).json()}
+ catch(e){t.textContent='Connection hiccup. Tap to retry.';t.onclick=()=>{t.remove();turn()};return}
+ t.remove();say('bot',r.reply);msgs.push({role:'host',text:r.reply});
+ if(r.done)return finish(r.profile);
+ if(r.chips&&r.chips.length){const c=document.createElement('div');c.className='chips';
+  r.chips.forEach(ch=>{const b=document.createElement('button');b.type='button';b.className='chip';b.textContent=ch;b.onclick=()=>answer(ch);c.appendChild(b)});ask.appendChild(c)}
+ const row=document.createElement('div');row.className='inrow';
+ const inp=document.createElement('input');inp.type='text';inp.placeholder='Type a reply…';inp.autocomplete='off';
+ const go=document.createElement('button');go.type='button';go.textContent='Send';
+ const submit=()=>{const v=inp.value.trim();if(v)answer(v)};go.onclick=submit;inp.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();submit()}};
+ row.appendChild(inp);row.appendChild(go);ask.appendChild(row);setTimeout(()=>inp.focus(),50)
 }
-function answer(v){say('me',v);A[Q[i].k]=v;i++;next()}
-async function finish(){
- $('ask').remove();say('bot','Got it, setting up your table…');
- const stay={'Under 30 min':25,'About an hour':60,'2+ hours':150}[A.stay]||60;
- const body={table_id:table,first_name:A.name,why:A.why,stay_minutes:stay,open_to_meet:/^yes/i.test(A.open||''),interests:A.interests||''};
- try{const r=await fetch('/api/visits',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  if(!r.ok)throw new Error(await r.text());visit=await r.json();render()}
- catch(e){say('bot','Sorry, something went wrong. Please refresh and try again.')}
+function answer(v){$('ask').innerHTML='';say('me',v);msgs.push({role:'guest',text:v});turn()}
+async function finish(p){
+ $('ask').remove();const t=typing();
+ try{const r=await fetch('/api/visits',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...p,table_id:table,guest_id:gid})});
+  if(!r.ok)throw new Error(await r.text());visit=await r.json();t.remove();render()}
+ catch(e){t.textContent='Sorry, something went wrong. Please refresh and try again.'}
 }
 const MODE={focus:['🎧 Focus mode',"You won't be matched with anyone, and staff will keep your area quiet. Enjoy your work."],
  connect:['👋 Open to connect',"We'll suggest a small group with shared interests. Nothing is shared until everyone accepts."],
@@ -74,5 +69,5 @@ async function pollMatch(){
   act.appendChild(a);act.append(' ');act.appendChild(n);const s=document.createElement('p');s.className='muted';s.textContent='Only first names and table numbers are shared, and only after everyone accepts.';act.appendChild(s)}
  box.innerHTML='';box.appendChild(c)}
 async function resp(id,accept){await fetch(`/api/matches/${id}/respond`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({visit_id:visit.visit_id,accept})});pollMatch()}
-next();
+turn();
 </script></body></html>
