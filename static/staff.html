@@ -32,7 +32,7 @@ async function load(){
   b.appendChild(el('div','who',LABEL[t.state]+(t.name?' · '+t.name:'')+(t.regular?' ⭐ Regular':'')));f.appendChild(b)});
  const a=$('alerts');a.innerHTML='';(d.alerts.length?d.alerts:['All calm. Nothing needs attention.']).forEach(x=>a.appendChild(el('div','alert',x)));
  const o=$('orders');o.innerHTML='';if(!d.orders.length)o.appendChild(el('p','muted','No open orders.'));
- d.orders.forEach(q=>{const r=el('div','row');const s=el('span');s.appendChild(el('b',null,'T'+q.table+' '));s.append(q.items);s.appendChild(el('div','muted',q.minutes+' min ago'));
+ d.orders.forEach(q=>{const r=el('div','row');const s=el('span');s.appendChild(el('b',null,'T'+q.table+' '));s.append(q.items);s.appendChild(el('div','muted',q.minutes+' min ago'+(q.eta?' · promised '+q.eta+' min':'')+(q.late?' · ⚠️ LATE':'')));if(q.late)r.style.background='#fff1ee';
   const btn=el('button',null,'Ready');btn.type='button';btn.onclick=async()=>{await fetch('/api/orders/'+q.id+'/ready',{method:'POST'});load()};r.appendChild(s);r.appendChild(btn);o.appendChild(r)});
 }
 load();setInterval(load,5000);

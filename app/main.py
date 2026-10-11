@@ -43,19 +43,31 @@ class VisitIn(BaseModel):
     interests: str = ""
     guest_id: str = ""
 
+import datetime as _dt
+IST = _dt.timedelta(hours=5, minutes=30)
+
+def slot_of(t):
+    """UTC datetime -> café time-of-day slot (IST)."""
+    h = (t + IST).hour
+    return "morning" if 5 <= h < 12 else "afternoon" if 12 <= h < 17 else "evening"
+
 def guest_history(s, gid):
-    """Past visits + most-ordered items for a returning guest (None for first-timers)."""
+    """Past visits + most-ordered items (overall and per time of day) for a returning guest."""
     if not gid: return None
     vs = s.query(Visit).filter_by(guest_id=gid).order_by(Visit.id).all()
     if not vs: return None
     from collections import Counter
-    c = Counter()
+    c, by_slot = Counter(), {}
     for o in s.query(Order).filter(Order.visit_id.in_([v.id for v in vs])):
-        c.update(n for n in o.items.split(", ") if n)
+        names = [n for n in o.items.split(", ") if n]
+        c.update(names); by_slot.setdefault(slot_of(o.created_at), Counter()).update(names)
     by_name = {m["name"]: m["id"] for m in ai.MENU}
     usual = [n for n, _ in c.most_common(2)]
+    usual_by_slot = {k: [n for n, _ in v.most_common(2)] for k, v in by_slot.items()}
     return {"name": vs[-1].first_name, "past_visits": len(vs), "usual_orders": usual,
+            "slot": slot_of(now()), "usual_by_slot": usual_by_slot,
             "usual_ids": [by_name[n] for n in usual if n in by_name],
+            "usual_ids_by_slot": {k: [by_name[n] for n in v if n in by_name] for k, v in usual_by_slot.items()},
             "past_reasons": list(dict.fromkeys(v.intent for v in vs))}
 
 def new_visit(s, table_id, name, why, stay, open_to_meet, interests, intent=None, guest_id=""):
@@ -93,21 +105,42 @@ def host_chat(b: ChatIn):
             for m in b.messages][-12:]
     with Session() as s:
         history = guest_history(s, b.guest_id[:64])
-    if history: history = {k: v for k, v in history.items() if k != "usual_ids"}
+    if history: history = {k: v for k, v in history.items() if not k.startswith("usual_ids")}
     return {**ai.chat(b.table_id, msgs, history), "returning": bool(history)}
 
 class OrderIn(BaseModel):
     visit_id: int
     items: list[str]
 
+def place_order(s, visit_id, item_ids):
+    """Create an order with a wait-time estimate from the live queue."""
+    names = {m["id"]: m["name"] for m in ai.MENU}
+    items = [names[i] for i in item_ids if i in names]
+    if not items: raise HTTPException(400, "no valid items")
+    ahead = s.query(Order).filter_by(status="new").count()
+    eta = 4 + 3 * ahead + max(0, len(items) - 1)  # base prep + 3 min per order ahead + 1 per extra item
+    o = Order(visit_id=visit_id, items=", ".join(items), eta_min=eta); s.add(o); s.commit()
+    return {"order_id": o.id, "eta_min": eta, "ahead": ahead, "items": items}
+
 @app.post("/api/orders")
 def create_order(b: OrderIn):
-    names = {m["id"]: m["name"] for m in ai.MENU}
-    items = [names[i] for i in b.items if i in names]
-    if not items: raise HTTPException(400, "no valid items")
     with Session() as s:
-        o = Order(visit_id=b.visit_id, items=", ".join(items)); s.add(o); s.commit()
-        return {"order_id": o.id}
+        return place_order(s, b.visit_id, b.items)
+
+class AskIn(BaseModel):
+    visit_id: int
+    text: str
+
+@app.post("/api/ask")
+def ask_bean(b: AskIn):
+    """After setup the guest can keep chatting with Bean: order by chat or ask about the menu."""
+    with Session() as s:
+        v = s.get(Visit, b.visit_id)
+        if not v: raise HTTPException(404)
+        r = ai.assistant(b.text[:300], v.intent)
+        out = {"reply": r["reply"]}
+        if r["items"]: out["order"] = place_order(s, v.id, r["items"])
+        return out
 
 @app.post("/api/orders/{oid}/ready")
 def order_ready(oid: int):
@@ -145,6 +178,7 @@ def my_match(vid: int):
                 if m.status == "matched":
                     out["people"] = [{"first_name": p.first_name, "table": p.table_id}
                                      for p in (s.get(Visit, i) for i in ids) if p and p.id != vid]
+                    out["icebreaker"] = m.icebreaker
                 return {"intent": v.intent, "match": out}
         return {"intent": v.intent, "match": None}
 
@@ -162,7 +196,11 @@ def respond(mid: int, b: Respond):
             else:
                 acc = set(_ids(m.accepts)) | {b.visit_id}
                 m.accepts = ",".join(map(str, sorted(acc)))
-                if acc >= set(_ids(m.visit_ids)): m.status = "matched"
+                if acc >= set(_ids(m.visit_ids)):
+                    m.status = "matched"
+                    ppl = [{"name": p.first_name, "interests": p.interests}
+                           for p in (s.get(Visit, i) for i in _ids(m.visit_ids)) if p]
+                    m.icebreaker = ai.icebreaker(ppl, m.reason or "")
             s.commit()
         return {"status": m.status}
 
@@ -211,15 +249,17 @@ def staff_state():
                   "accepted_matches": sum(m.status == "matched" for m in matches), "free": sum(t["state"] == "free" for t in tables)}
         vt = {v.id: v.table_id for v in visits}
         queue = [{"id": o.id, "table": vt.get(o.visit_id), "items": o.items,
-                  "minutes": int((now() - o.created_at).total_seconds() // 60)}
+                  "minutes": int((now() - o.created_at).total_seconds() // 60), "eta": o.eta_min}
                  for o in orders if o.status == "new"]
+        for q in queue: q["late"] = bool(q["eta"] and q["minutes"] > q["eta"])
         facts = []
         focus = [t["id"] for t in tables if t["state"] == "focus"]
         if focus: facts.append(f"{'Tables' if len(focus) > 1 else 'Table'} {', '.join(map(str, focus))} {'are' if len(focus) > 1 else 'is'} in focus mode: keep noise low, seat groups elsewhere.")
         pend = [m for m in matches if m.status == "pending"]
         if pend: facts.append(f"{len(pend)} match suggestion(s) awaiting responses.")
         for q in queue:
-            if q["minutes"] >= 10: facts.append(f"Table {q['table']} order waiting {q['minutes']} min.")
+            if q["late"] or q["minutes"] >= 10:
+                facts.append(f"Table {q['table']} order is late: waiting {q['minutes']} min (promised {q['eta']}).")
         if counts["free"] == 0: facts.append("No free tables: expect a wait for walk-ins.")
         key = json.dumps(facts)
         if key != _tip_cache["key"] or time.time() - _tip_cache["t"] > 120:

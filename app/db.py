@@ -33,6 +33,7 @@ class Match(Base):
     reason = Column(Text)
     status = Column(String(16), default="pending")  # pending|matched|declined
     accepts = Column(Text, default="")  # comma separated visit ids that accepted
+    icebreaker = Column(Text)
 
 class Order(Base):
     __tablename__ = "orders"
@@ -40,6 +41,7 @@ class Order(Base):
     visit_id = Column(Integer)
     items = Column(Text)
     status = Column(String(16), default="new")  # new|ready
+    eta_min = Column(Integer)
     created_at = Column(DateTime, default=now)
 
 ZONES = {1: "window", 2: "window", 3: "sofa", 4: "quiet", 5: "quiet", 6: "bar"}
@@ -47,8 +49,10 @@ ZONES = {1: "window", 2: "window", 3: "sofa", 4: "quiet", 5: "quiet", 6: "bar"}
 def init_db():
     Base.metadata.create_all(engine)
     from sqlalchemy import text, inspect
-    if "guest_id" not in {c["name"] for c in inspect(engine).get_columns("visits")}:
-        with engine.begin() as c: c.execute(text("ALTER TABLE visits ADD COLUMN guest_id VARCHAR(64)"))
+    # tiny additive migrations (safe on SQLite and Postgres)
+    for tbl, col, typ in [("visits", "guest_id", "VARCHAR(64)"), ("matches", "icebreaker", "TEXT"), ("orders", "eta_min", "INTEGER")]:
+        if col not in {c["name"] for c in inspect(engine).get_columns(tbl)}:
+            with engine.begin() as c: c.execute(text(f"ALTER TABLE {tbl} ADD COLUMN {col} {typ}"))
     with Session() as s:
         for i, z in ZONES.items():
             if not s.get(Table, i):

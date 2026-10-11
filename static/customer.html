@@ -39,6 +39,8 @@ function render(){
  $('out').innerHTML=`<div class="banner ${visit.intent}"><b>${m[0]}</b><br>${m[1]}</div>
  <div class=card><h2>✨ Picked for you</h2><div id=recs></div></div>
  <div id=match></div>
+ <div class=card><h2>💬 Ask Bean</h2><p class=muted>Order by chatting ("2 cold brews and a brownie") or ask about the menu. Any language.</p>
+  <div id=askLog></div><div class=inrow><input id=askIn type=text autocomplete=off placeholder="Type to Bean…"><button id=askGo type=button>Send</button></div></div>
  <div class=card><h2>Menu</h2><div id=menu></div><div class=row><b>Total ₹<span id=tot>0</span></b><button id=ob type=button>Place order</button></div><p id=ostat class=muted></p></div>`;
  (visit.recs||[]).forEach(x=>{const d=document.createElement('div');d.className='row';
   d.innerHTML=`<div><b></b><br><span class=muted></span></div><button type=button class=alt>Add</button>`;
@@ -49,20 +51,29 @@ function render(){
   d.querySelector('span').textContent=`${x.name} · ₹${x.price}`;const [minus,plus]=d.querySelectorAll('button');
   minus.onclick=()=>add(x.id,-1);plus.onclick=()=>add(x.id,1);$('menu').appendChild(d)})});
  $('ob').onclick=order;
+ const sendAsk=async()=>{const v=$('askIn').value.trim();if(!v)return;$('askIn').value='';const log=$('askLog');
+  const me=document.createElement('div');me.className='me';me.textContent=v;log.appendChild(me);
+  const t=document.createElement('div');t.className='bot';t.textContent='Bean is typing…';t.style.opacity=.6;log.appendChild(t);
+  try{const r=await (await fetch('/api/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({visit_id:visit.visit_id,text:v})})).json();
+   t.style.opacity=1;t.textContent=r.reply+(r.order?`\n✅ Ordered: ${r.order.items.join(', ')} · ready in ~${r.order.eta_min} min`:'');t.style.whiteSpace='pre-line'}
+  catch(e){t.textContent='Connection hiccup, try again.'}};
+ $('askGo').onclick=sendAsk;$('askIn').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();sendAsk()}};
  if(visit.intent==='connect'){pollMatch();setInterval(pollMatch,4000)}
 }
 function add(id,d=1){cart.set(id,Math.max(0,(cart.get(id)||0)+d));const q=$('q_'+id);if(q)q.textContent=cart.get(id);
  $('tot').textContent=menuData.reduce((s,x)=>s+(cart.get(x.id)||0)*x.price,0)}
 async function order(){const items=[];cart.forEach((n,id)=>{for(let k=0;k<n;k++)items.push(id)});if(!items.length){$('ostat').textContent='Add something first.';return}
  const r=await fetch('/api/orders',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({visit_id:visit.visit_id,items})});
- $('ostat').textContent=r.ok?"✅ Order sent to the counter. We'll bring it over.":'Could not place the order.';
+ const od=r.ok?await r.json():null;
+ $('ostat').textContent=od?`✅ Order sent. Ready in about ${od.eta_min} min${od.ahead?` (${od.ahead} order${od.ahead>1?'s':''} ahead)`:''}. We'll bring it over.`:'Could not place the order.';
  if(r.ok){cart.clear();document.querySelectorAll('[id^=q_]').forEach(b=>b.textContent='0');$('tot').textContent='0'}}
 async function pollMatch(){
  const d=await (await fetch(`/api/visits/${visit.visit_id}/match`)).json(),m=d.match,box=$('match');
  if(!m){box.innerHTML=`<div class=card><h2>👋 Connect</h2><p class=muted>Looking for people who share your interests…</p></div>`;return}
  const c=document.createElement('div');c.className='card';c.innerHTML=`<h2>👋 Suggested group of ${m.size}</h2><p></p><div class=act></div>`;
  c.querySelector('p').textContent=m.reason;const act=c.querySelector('.act');
- if(m.status==='matched'){act.innerHTML='<p>🎉 Everyone accepted! Say hi:</p>';(m.people||[]).forEach(p=>{const r=document.createElement('div');r.className='row';r.textContent=`${p.first_name} · Table ${p.table}`;act.appendChild(r)})}
+ if(m.status==='matched'){act.innerHTML='<p>🎉 Everyone accepted! Say hi:</p>';(m.people||[]).forEach(p=>{const r=document.createElement('div');r.className='row';r.textContent=`${p.first_name} · Table ${p.table}`;act.appendChild(r)});
+  if(m.icebreaker){const ib=document.createElement('div');ib.className='alert';ib.textContent='💡 Icebreaker: '+m.icebreaker;act.appendChild(ib)}}
  else if(m.accepted)act.innerHTML='<p class=muted>You accepted. Waiting for the others…</p>';
  else{const a=document.createElement('button');a.type='button';a.textContent='Accept';a.onclick=()=>resp(m.id,true);
   const n=document.createElement('button');n.type='button';n.className='alt';n.textContent='No thanks';n.onclick=()=>resp(m.id,false);
