@@ -1,5 +1,24 @@
-<!doctype html><meta name=viewport content="width=device-width,initial-scale=1"><link rel=stylesheet href=/static/style.css>
-<header>☕ Café Companion — the café that adapts to why you came</header>
-<main><div class=card><a href=/staff>Staff dashboard →</a></div>
-<div class=card><b>Table links</b> (open on phone / turn into QR)<div id=l></div></div></main>
-<script>for(let i=1;i<=6;i++){const u=location.origin+'/t/'+i;l.innerHTML+=`<p>Table ${i}: <a href="/t/${i}">${u}</a></p>`}</script>
+<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>Café Companion</title><link rel=stylesheet href=/static/style.css></head><body>
+<header><div><h1>☕ Café Companion</h1><small>The café that adapts to why you came</small></div><a href="/staff">🧑‍🍳 Staff</a></header>
+<main class=wide>
+ <section class=hero>
+  <h2>Why you came matters more than what you order.</h2>
+  <p>Guests scan the QR on their table and tell the AI why they're here. The café adapts: quiet zones for people working, gentle introductions for people who want to meet others, and a live floor view for staff.</p>
+  <div class=cta><a class="btn gold" href="#tables">📱 I'm a customer</a><a class="btn ghost" href="/staff">🧑‍🍳 I'm staff</a></div>
+ </section>
+ <div class=feats>
+  <div class=feat><span class=i>🎧</span><b>Focus mode</b><span class=muted>Working? You're never matched, and staff keep your area quiet.</span></div>
+  <div class=feat><span class=i>👋</span><b>Connect, safely</b><span class=muted>Small groups by shared interests. Nothing is shared until everyone accepts.</span></div>
+  <div class=feat><span class=i>✨</span><b>AI recommendations</b><span class=muted>Gemini suggests food and drink for why you came, not just what's popular.</span></div>
+ </div>
+ <div class=sec id=tables><h3>Scan your table</h3><span class=muted>Point a phone camera at a code, or tap Open</span></div>
+ <div class=qrs id=qrs></div>
+</main>
+<script>
+const Z={1:'window',2:'window',3:'sofa',4:'quiet',5:'quiet',6:'bar'};
+const g=document.getElementById('qrs');
+for(let i=1;i<=6;i++){const c=document.createElement('div');c.className='qr';
+ c.innerHTML=`<div class=tn>Table ${i}</div><div class=zone>${Z[i]} seating</div><div class=code><img alt="QR code for table ${i}" src="/qr/${i}.svg"></div><a class=btn href="/t/${i}">Open table ${i}</a>`;
+ g.appendChild(c)}
+</script></body></html>

@@ -1,36 +1,78 @@
-<!doctype html><meta name=viewport content="width=device-width,initial-scale=1"><link rel=stylesheet href=/static/style.css>
-<header>☕ Café Companion · Table <span id=tn></span></header>
+<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>Café Companion · Table</title><link rel=stylesheet href=/static/style.css></head><body>
+<header><div><h1>☕ Table <span id=tn></span></h1><small>Café Companion</small></div><a href="/">Home</a></header>
 <main><div id=chat></div><div id=ask class=card></div><div id=out></div></main>
 <script>
-const table=+location.pathname.split('/').pop();tn.textContent=table;
-const Q=[['name',"Hi! What's your first name?"],['why',"What brings you here today? (work, catch-up, unwind…)"],
- ['stay_minutes',"How long are you staying (minutes)?"],['open_to_meet',"Open to meeting other people? (yes/no)"],['interests',"Any interests? (comma separated)"]];
-const A={};let i=0,visit=null,cart=new Set();
-const say=(c,t)=>{chat.innerHTML+=`<div class=${c}></div>`;chat.lastChild.textContent=t};
-function next(){if(i>=Q.length)return finish();say('bot',Q[i][1]);ask.innerHTML='<input id=a autofocus> <button onclick=send()>Send</button>';a.onkeydown=e=>e.key=='Enter'&&send()}
-function send(){const v=a.value.trim();if(!v)return;say('me',v);const k=Q[i][0];
- A[k]=k=='stay_minutes'?(parseInt(v)||60):k=='open_to_meet'?/^(y|yes|sure|ok|yeah)/i.test(v):v;i++;next()}
-async function finish(){ask.remove();say('bot','Thinking…');
- const r=await fetch('/api/visits',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({table_id:table,first_name:A.name,why:A.why,stay_minutes:A.stay_minutes,open_to_meet:A.open_to_meet,interests:A.interests})});
- visit=await r.json();chat.lastChild.remove();render()}
+const $=id=>document.getElementById(id);
+const table=+location.pathname.split('/').pop()||1;$('tn').textContent=table;
+const Q=[
+ {k:'name',t:"Hi! Welcome in. What's your first name?",text:true,ph:'First name'},
+ {k:'why',t:"What brings you here today?",chips:['Getting work done','Catching up with a friend','Here to meet new people','Just unwinding'],text:true,ph:'Or type your own…'},
+ {k:'stay',t:"How long are you planning to stay?",chips:['Under 30 min','About an hour','2+ hours']},
+ {k:'open',t:"Would you be open to meeting people with similar interests today?",chips:['Yes, happy to','Not today']},
+ {k:'interests',t:"Pick a few interests (for recommendations and matching):",chips:['Startups','Tech','Books','Music','Photography','Hiking','Games','Design','Travel','Fitness'],multi:true,text:true,ph:'Add more, comma separated'}
+];
+const A={};let i=0,visit=null;const cart=new Map();let menuData=[];
+function say(cls,t){const d=document.createElement('div');d.className=cls;d.textContent=t;$('chat').appendChild(d);d.scrollIntoView({behavior:'smooth',block:'end'})}
+function next(){
+ if(i>=Q.length)return finish();
+ const q=Q[i];say('bot',q.t);const ask=$('ask');ask.innerHTML='';const picked=new Set();
+ if(q.chips){const c=document.createElement('div');c.className='chips';
+  q.chips.forEach(ch=>{const b=document.createElement('button');b.type='button';b.className='chip';b.textContent=ch;
+   b.onclick=()=>{if(q.multi){picked.has(ch)?picked.delete(ch):picked.add(ch);b.classList.toggle('on')}else answer(ch)};c.appendChild(b)});ask.appendChild(c)}
+ if(q.text||q.multi){const r=document.createElement('div');r.className='inrow';
+  const inp=document.createElement('input');inp.type='text';inp.placeholder=q.ph||'Type here…';inp.autocomplete='off';
+  const go=document.createElement('button');go.type='button';go.textContent=q.multi?'Done':'Send';
+  const submit=()=>{const typed=inp.value.trim();const v=q.multi?[...picked,...typed.split(',').map(s=>s.trim()).filter(Boolean)].join(', '):typed;if(!v)return;answer(v)};
+  go.onclick=submit;inp.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();submit()}};
+  r.appendChild(inp);r.appendChild(go);ask.appendChild(r);setTimeout(()=>inp.focus(),50)}
+}
+function answer(v){say('me',v);A[Q[i].k]=v;i++;next()}
+async function finish(){
+ $('ask').remove();say('bot','Got it, setting up your table…');
+ const stay={'Under 30 min':25,'About an hour':60,'2+ hours':150}[A.stay]||60;
+ const body={table_id:table,first_name:A.name,why:A.why,stay_minutes:stay,open_to_meet:/^yes/i.test(A.open||''),interests:A.interests||''};
+ try{const r=await fetch('/api/visits',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(!r.ok)throw new Error(await r.text());visit=await r.json();render()}
+ catch(e){say('bot','Sorry, something went wrong. Please refresh and try again.')}
+}
+const MODE={focus:['🎧 Focus mode',"You won't be matched with anyone, and staff will keep your area quiet. Enjoy your work."],
+ connect:['👋 Open to connect',"We'll suggest a small group with shared interests. Nothing is shared until everyone accepts."],
+ chill:['☕ Just relaxing',"Sit back and enjoy. You won't be matched unless you change your mind."]};
 function render(){
- let h='';
- if(visit.intent=='focus')h+=`<div class=banner>You're in focus mode. You won't be matched and staff will keep it quiet.</div>`;
- h+=`<div class=card><b>Picked for you</b>`+visit.recs.map(m=>`<p><b>${m.name}</b> ₹${m.price}<br><small>${m.reason}</small></p>`).join('')+`</div>`;
- h+=`<div class=card id=menu><b>Menu</b></div><div id=match></div>`;out.innerHTML=h;
- fetch('/api/menu').then(r=>r.json()).then(m=>{menu.innerHTML+=m.map(x=>`<div class=row><span>${x.name} ₹${x.price}</span><button id=b_${x.id} onclick="tog('${x.id}')">Add</button></div>`).join('')+`<p><button onclick=order()>Place order</button> <span id=ostat></span></p>`});
- if(visit.intent=='connect'){pollMatch();setInterval(pollMatch,4000)}}
-function tog(id){cart.has(id)?cart.delete(id):cart.add(id);document.getElementById('b_'+id).textContent=cart.has(id)?'Added ✓':'Add'}
-async function order(){if(!cart.size)return;await fetch('/api/orders',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({visit_id:visit.visit_id,items:[...cart]})});
- cart.clear();ostat.textContent='Order sent!';document.querySelectorAll('[id^=b_]').forEach(b=>b.textContent='Add')}
+ const m=MODE[visit.intent]||MODE.chill;
+ $('out').innerHTML=`<div class="banner ${visit.intent}"><b>${m[0]}</b><br>${m[1]}</div>
+ <div class=card><h2>✨ Picked for you</h2><div id=recs></div></div>
+ <div id=match></div>
+ <div class=card><h2>Menu</h2><div id=menu></div><div class=row><b>Total ₹<span id=tot>0</span></b><button id=ob type=button>Place order</button></div><p id=ostat class=muted></p></div>`;
+ (visit.recs||[]).forEach(x=>{const d=document.createElement('div');d.className='row';
+  d.innerHTML=`<div><b></b><br><span class=muted></span></div><button type=button class=alt>Add</button>`;
+  d.querySelector('b').textContent=`${x.name} · ₹${x.price}`;d.querySelector('.muted').textContent=x.reason;
+  d.querySelector('button').onclick=()=>add(x.id);$('recs').appendChild(d)});
+ fetch('/api/menu').then(r=>r.json()).then(ms=>{menuData=ms;ms.forEach(x=>{const d=document.createElement('div');d.className='row';
+  d.innerHTML=`<span></span><span><button type=button class=alt>−</button> <b id=q_${x.id}>0</b> <button type=button class=alt>+</button></span>`;
+  d.querySelector('span').textContent=`${x.name} · ₹${x.price}`;const [minus,plus]=d.querySelectorAll('button');
+  minus.onclick=()=>add(x.id,-1);plus.onclick=()=>add(x.id,1);$('menu').appendChild(d)})});
+ $('ob').onclick=order;
+ if(visit.intent==='connect'){pollMatch();setInterval(pollMatch,4000)}
+}
+function add(id,d=1){cart.set(id,Math.max(0,(cart.get(id)||0)+d));const q=$('q_'+id);if(q)q.textContent=cart.get(id);
+ $('tot').textContent=menuData.reduce((s,x)=>s+(cart.get(x.id)||0)*x.price,0)}
+async function order(){const items=[];cart.forEach((n,id)=>{for(let k=0;k<n;k++)items.push(id)});if(!items.length){$('ostat').textContent='Add something first.';return}
+ const r=await fetch('/api/orders',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({visit_id:visit.visit_id,items})});
+ $('ostat').textContent=r.ok?"✅ Order sent to the counter. We'll bring it over.":'Could not place the order.';
+ if(r.ok){cart.clear();document.querySelectorAll('[id^=q_]').forEach(b=>b.textContent='0');$('tot').textContent='0'}}
 async function pollMatch(){
- const d=await (await fetch(`/api/visits/${visit.visit_id}/match`)).json(),m=d.match;
- if(!m){match.innerHTML=`<div class=card><b>Matches</b><p>Looking for people who share your interests…</p></div>`;return}
- let h=`<div class=card><b>Matches</b><p>Suggested group of ${m.size}: ${m.reason}</p>`;
- if(m.status=='matched')h+='<p>🎉 Everyone accepted!</p>'+m.people.map(p=>`<p><b></b>${p.first_name} — Table ${p.table}</p>`).join('');
- else if(m.accepted)h+='<p>Waiting for the others to accept…</p>';
- else h+=`<button onclick="resp(${m.id},true)">Accept</button> <button class=alt onclick="resp(${m.id},false)">Decline</button>`;
- match.innerHTML=h+'</div>'}
+ const d=await (await fetch(`/api/visits/${visit.visit_id}/match`)).json(),m=d.match,box=$('match');
+ if(!m){box.innerHTML=`<div class=card><h2>👋 Connect</h2><p class=muted>Looking for people who share your interests…</p></div>`;return}
+ const c=document.createElement('div');c.className='card';c.innerHTML=`<h2>👋 Suggested group of ${m.size}</h2><p></p><div class=act></div>`;
+ c.querySelector('p').textContent=m.reason;const act=c.querySelector('.act');
+ if(m.status==='matched'){act.innerHTML='<p>🎉 Everyone accepted! Say hi:</p>';(m.people||[]).forEach(p=>{const r=document.createElement('div');r.className='row';r.textContent=`${p.first_name} · Table ${p.table}`;act.appendChild(r)})}
+ else if(m.accepted)act.innerHTML='<p class=muted>You accepted. Waiting for the others…</p>';
+ else{const a=document.createElement('button');a.type='button';a.textContent='Accept';a.onclick=()=>resp(m.id,true);
+  const n=document.createElement('button');n.type='button';n.className='alt';n.textContent='No thanks';n.onclick=()=>resp(m.id,false);
+  act.appendChild(a);act.append(' ');act.appendChild(n);const s=document.createElement('p');s.className='muted';s.textContent='Only first names and table numbers are shared, and only after everyone accepts.';act.appendChild(s)}
+ box.innerHTML='';box.appendChild(c)}
 async function resp(id,accept){await fetch(`/api/matches/${id}/respond`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({visit_id:visit.visit_id,accept})});pollMatch()}
 next();
-</script>
+</script></body></html>

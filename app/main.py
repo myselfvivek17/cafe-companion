@@ -1,6 +1,6 @@
-import json, time, pathlib
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+import json, time, pathlib, io, os
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from . import ai
@@ -19,6 +19,17 @@ def landing(): return page("index.html")
 def staff(): return page("staff.html")
 @app.get("/t/{table}")
 def customer(table: int): return page("customer.html")
+
+@app.get("/qr/{table}.svg")
+def qr(table: int, request: Request):
+    """QR code pointing at this deployment's own /t/{table} URL (works on Cloud Run and locally)."""
+    import qrcode, qrcode.image.svg
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host = request.headers.get("host", request.url.netloc)
+    url = os.environ.get("BASE_URL", f"{proto}://{host}").rstrip("/") + f"/t/{table}"
+    buf = io.BytesIO()
+    qrcode.make(url, image_factory=qrcode.image.svg.SvgPathImage, border=3).save(buf)
+    return Response(buf.getvalue(), media_type="image/svg+xml")
 
 @app.get("/api/menu")
 def menu(): return ai.MENU
@@ -125,9 +136,12 @@ def seed():
     demo = [("Asha", "focus", "coding, startups", 2), ("Ravi", "connect", "hiking, photography, startups", 3),
             ("Meera", "connect", "photography, hiking, books", 5), ("Kabir", "chill", "music", 6)]
     with Session() as s:
-        for name, intent, interests, t in demo:
-            new_visit(s, t, name, "", 60, intent == "connect", interests, intent=intent)
-    return {"seeded": len(demo)}
+        taken = {v.table_id for v in s.query(Visit).filter_by(active=True)}
+        free = [t.id for t in s.query(Table).order_by(Table.id) if t.id not in taken]
+        n = 0
+        for (name, intent, interests, _), t in zip(demo, free):  # only use free tables, never bump a real guest
+            new_visit(s, t, name, "", 60, intent == "connect", interests, intent=intent); n += 1
+    return {"seeded": n}
 
 @app.post("/api/reset")
 def reset():
@@ -153,14 +167,16 @@ def staff_state():
             tables.append({"id": t.id, "zone": t.zone, "state": state, "name": v.first_name if v else None})
         counts = {"working": sum(t["state"] == "focus" for t in tables),
                   "open": sum(t["state"] in ("connect", "chill") for t in tables),
-                  "active_matches": len(matches), "free": sum(t["state"] == "free" for t in tables)}
+                  "active_matches": len(matches),
+                  "pending_matches": sum(m.status == "pending" for m in matches),
+                  "accepted_matches": sum(m.status == "matched" for m in matches), "free": sum(t["state"] == "free" for t in tables)}
         vt = {v.id: v.table_id for v in visits}
         queue = [{"id": o.id, "table": vt.get(o.visit_id), "items": o.items,
                   "minutes": int((now() - o.created_at).total_seconds() // 60)}
                  for o in orders if o.status == "new"]
         facts = []
         focus = [t["id"] for t in tables if t["state"] == "focus"]
-        if focus: facts.append(f"Tables {', '.join(map(str, focus))} are in focus mode: keep noise low, seat groups elsewhere.")
+        if focus: facts.append(f"{'Tables' if len(focus) > 1 else 'Table'} {', '.join(map(str, focus))} {'are' if len(focus) > 1 else 'is'} in focus mode: keep noise low, seat groups elsewhere.")
         pend = [m for m in matches if m.status == "pending"]
         if pend: facts.append(f"{len(pend)} match suggestion(s) awaiting responses.")
         for q in queue:

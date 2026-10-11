@@ -1,22 +1,39 @@
-<!doctype html><meta name=viewport content="width=device-width,initial-scale=1"><link rel=stylesheet href=/static/style.css>
-<header>☕ Staff view</header>
-<main>
-<div class=card><button onclick="post('/api/seed')">Seed demo visitors</button>
-<button onclick="post('/api/match')">Run matching</button>
-<button class=alt onclick="post('/api/reset')">Reset</button></div>
-<div class=card id=counts></div>
-<div class=card><b>Floor</b><div class=grid id=grid></div></div>
-<div class=card><b>Alerts</b><div id=alerts></div></div>
-<div class=card><b>Order queue</b><div id=orders></div></div>
+<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>Café Companion · Staff</title><link rel=stylesheet href=/static/style.css></head><body>
+<header><div><h1>🧑‍🍳 Staff dashboard</h1><small>Live · refreshes every 5 s</small></div><a href="/">Home</a></header>
+<main class=wide>
+<div class=card><button type=button data-u="/api/seed">➕ Add demo guests</button> <button type=button data-u="/api/match">🤝 Run matching</button> <button type=button class=alt data-u="/api/reset">Reset floor</button> <span id=msg class=muted></span></div>
+<div class=stats>
+ <div class=stat><span class=muted>🎧 Working</span><b id=s_work>0</b></div>
+ <div class=stat><span class=muted>👋 Open / relaxing</span><b id=s_open>0</b></div>
+ <div class=stat><span class=muted>🤝 Matches (pending / accepted)</span><b id=s_match>0</b></div>
+ <div class=stat><span class=muted>🪑 Free tables</span><b id=s_free>0</b></div>
+</div>
+<div class=cols>
+ <div class=card><h2>Floor map</h2><div class=floor id=floor></div>
+  <div class=legend><span><i class=free></i>Free</span><span><i class=focus></i>Working (keep quiet)</span><span><i class=connect></i>Open to connect</span><span><i class=matched></i>Matched</span><span><i class=chill></i>Relaxing</span></div></div>
+ <div>
+  <div class=card><h2>💡 AI floor tips</h2><div id=alerts></div></div>
+  <div class=card><h2>🧾 Order queue</h2><div id=orders></div></div>
+ </div>
+</div>
 </main>
 <script>
-async function post(u){await fetch(u,{method:'POST'});load()}
+const $=id=>document.getElementById(id);
+const LABEL={free:'Free',focus:'Working',connect:'Open to connect',matched:'Matched',chill:'Relaxing'};
+document.querySelectorAll('[data-u]').forEach(b=>b.onclick=async()=>{b.disabled=true;$('msg').textContent='Working…';
+ try{const r=await (await fetch(b.dataset.u,{method:'POST'})).json();$('msg').textContent=r.created!==undefined?`${r.created} new match suggestion(s)`:'Done'}catch(e){$('msg').textContent='Failed'}
+ b.disabled=false;load()});
+function el(tag,cls,txt){const e=document.createElement(tag);if(cls)e.className=cls;if(txt!==undefined)e.textContent=txt;return e}
 async function load(){
  const d=await (await fetch('/api/staff')).json(),c=d.counts;
- counts.innerHTML=`Working: <b>${c.working}</b> · Open: <b>${c.open}</b> · Matches: <b>${c.active_matches}</b> · Free: <b>${c.free}</b>`;
- grid.innerHTML=d.tables.map(t=>`<div class="tbl ${t.state}">T${t.id}<br><small>${t.state}${t.name?' · '+t.name:''}</small></div>`).join('');
- alerts.innerHTML=d.alerts.map(a=>`<p>⚠️ ${a}</p>`).join('')||'<p>All calm.</p>';
- orders.innerHTML=d.orders.map(o=>`<div class=row><span>T${o.table}: ${o.items} (${o.minutes}m)</span><button onclick="post('/api/orders/${o.id}/ready')">Ready</button></div>`).join('')||'<p>No open orders.</p>';
+ $('s_work').textContent=c.working;$('s_open').textContent=c.open;$('s_match').textContent=`${c.pending_matches??c.active_matches} / ${c.accepted_matches??0}`;$('s_free').textContent=c.free;
+ const f=$('floor');f.innerHTML='';d.tables.forEach(t=>{const b=el('div','tbl '+t.state);b.appendChild(el('div','n','T'+t.id));b.appendChild(el('div','z',t.zone+' seating'));
+  b.appendChild(el('div','who',LABEL[t.state]+(t.name?' · '+t.name:'')));f.appendChild(b)});
+ const a=$('alerts');a.innerHTML='';(d.alerts.length?d.alerts:['All calm. Nothing needs attention.']).forEach(x=>a.appendChild(el('div','alert',x)));
+ const o=$('orders');o.innerHTML='';if(!d.orders.length)o.appendChild(el('p','muted','No open orders.'));
+ d.orders.forEach(q=>{const r=el('div','row');const s=el('span');s.appendChild(el('b',null,'T'+q.table+' '));s.append(q.items);s.appendChild(el('div','muted',q.minutes+' min ago'));
+  const btn=el('button',null,'Ready');btn.type='button';btn.onclick=async()=>{await fetch('/api/orders/'+q.id+'/ready',{method:'POST'});load()};r.appendChild(s);r.appendChild(btn);o.appendChild(r)});
 }
 load();setInterval(load,5000);
-</script>
+</script></body></html>
