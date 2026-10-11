@@ -10,7 +10,7 @@ MENU = [
     {"id": "brownie", "name": "Walnut Brownie", "price": 120, "tags": "chill"},
     {"id": "lemonade", "name": "Mint Lemonade", "price": 110, "tags": "chill"},
 ]
-MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+MODEL = os.getenv("GEMINI_MODEL", "gemini-3.7-flash")
 _client = None
 
 def _gen(prompt: str):
@@ -27,7 +27,7 @@ def _gen(prompt: str):
         cfg = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.4,
                                           thinking_config=types.ThinkingConfig(thinking_budget=0))
         # On rate limits (429) alternate between the main model and a lighter backup model, with short backoff.
-        models = [MODEL, os.getenv("GEMINI_BACKUP_MODEL", "gemini-2.5-flash-lite")]
+        models = [MODEL, os.getenv("GEMINI_BACKUP_MODEL", "gemini-2.5-flash")]
         for attempt in range(4):
             try:
                 r = _client.models.generate_content(model=models[attempt % 2], contents=prompt, config=cfg)
